@@ -1,0 +1,298 @@
+# ---------------------- FINAL STREAMLIT BANKING DASHBOARD + ML MODELS ----------------------
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.express as px
+
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    confusion_matrix, roc_auc_score, roc_curve, classification_report
+)
+
+# ---------------------- Streamlit Page Setup ----------------------
+st.set_page_config(page_title="Banking Dashboard", layout="wide")
+
+# ---------------------- Load CSV ----------------------
+@st.cache_data
+def load_data():
+    return pd.read_csv("Loan_default.csv")
+
+df = load_data()
+
+# ---------------------- TITLE ----------------------
+st.title("🏦 Banking Project Dashboard with ML")
+st.write("Interactive analysis + Machine Learning models for loan default prediction.")
+
+# =====================================================================
+# ===================== SECTION 1: DASHBOARD ==========================
+# =====================================================================
+
+# ---------------------- SIDEBAR FILTERS ----------------------
+st.sidebar.header("Filters")
+
+if "Education" in df.columns:
+    edu_filter = st.sidebar.multiselect(
+        "Select Education Level",
+        options=df["Education"].unique(),
+        default=df["Education"].unique()
+    )
+    df = df[df["Education"].isin(edu_filter)]
+
+# ---------------------- KPIs ----------------------
+st.subheader("📌 Key Metrics")
+
+col1, col2, col3 = st.columns(3)
+
+col1.metric("Total Customers", len(df))
+
+if "LoanAmount" in df.columns:
+    col2.metric("Avg Loan Amount", round(df["LoanAmount"].mean(), 2))
+
+if "Default" in df.columns:
+    default_rate = round(df["Default"].mean() * 100, 2)
+    col3.metric("Default Rate (%)", f"{default_rate}%")
+
+# ---------------------- DATA PREVIEW ----------------------
+st.subheader("📄 Dataset Preview")
+st.dataframe(df)
+
+# ---------------------- LOAN AMOUNT DISTRIBUTION ----------------------
+if "LoanAmount" in df.columns:
+    st.subheader("📊 Loan Amount Distribution")
+    fig, ax = plt.subplots()
+    ax.hist(df["LoanAmount"], bins=40, edgecolor="white")
+    ax.set_xlabel("Loan Amount")
+    ax.set_ylabel("Count")
+    st.pyplot(fig)
+
+# ---------------------- SCATTER: Income vs Loan Amount ----------------------
+if "Income" in df.columns and "LoanAmount" in df.columns:
+    st.subheader("📈 Income vs Loan Amount")
+    fig2 = px.scatter(
+        df,
+        x="Income",
+        y="LoanAmount",
+        color="Default",
+        title="Income vs Loan Amount"
+    )
+    st.plotly_chart(fig2)
+
+# ---------------------- CORRELATION HEATMAP ----------------------
+st.subheader("🔍 Correlation Heatmap")
+
+numeric_df = df.select_dtypes(include=["int64", "float64"])
+
+if numeric_df.shape[1] >= 2:
+    plt.figure(figsize=(10, 4))
+    sns.heatmap(numeric_df.corr(), annot=True, cmap="viridis")
+    st.pyplot(plt)
+
+# ---------------------- DOWNLOAD BUTTON ----------------------
+st.subheader("⬇ Download Filtered Data")
+csv_data = df.to_csv(index=False).encode("utf-8")
+st.download_button("Download CSV", csv_data, "filtered_banking_data.csv", "text/csv")
+
+# =====================================================================
+# ===================== SECTION 2: MACHINE LEARNING ===================
+# =====================================================================
+
+st.markdown("---")
+st.header("🤖 Machine Learning Models for Default Prediction")
+
+# ---------------------- ML DATA PREPARATION ----------------------
+required_features = [
+    "Age","Income","LoanAmount","CreditScore","MonthsEmployed",
+    "NumCreditLines","InterestRate","LoanTerm","DTIRatio",
+    "Education","EmploymentType","MaritalStatus","HasMortgage",
+    "HasDependents","LoanPurpose","HasCoSigner","Default"
+]
+
+# Filter missing columns
+df = df[required_features]
+
+X = df.drop("Default", axis=1)
+y = df["Default"]
+
+numeric_features = X.select_dtypes(include=['int64','float64']).columns.tolist()
+categorical_features = X.select_dtypes(include=['object']).columns.tolist()
+
+# Correct OneHotEncoder depending on sklearn version
+try:
+    ohe = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
+except:
+    ohe = OneHotEncoder(handle_unknown="ignore", sparse=False)
+
+numeric_transformer = Pipeline(steps=[
+    ("imputer", SimpleImputer(strategy="median")),
+    ("scaler", StandardScaler())
+])
+
+categorical_transformer = Pipeline(steps=[
+    ("imputer", SimpleImputer(strategy="most_frequent")),
+    ("onehot", ohe)
+])
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("num", numeric_transformer, numeric_features),
+        ("cat", categorical_transformer, categorical_features)
+    ]
+)
+
+# ---------------------- Train Test Split ----------------------
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.3, random_state=42, stratify=y
+)
+
+# ---------------------- Define Models ----------------------
+models = {
+    "Logistic Regression": LogisticRegression(max_iter=1000),
+    "Decision Tree": DecisionTreeClassifier(max_depth=6),
+    "Random Forest": RandomForestClassifier(n_estimators=200),
+    "Gradient Boosting": GradientBoostingClassifier(n_estimators=200)
+}
+
+model_choice = st.selectbox("Choose ML Model:", list(models.keys()))
+
+pipeline = Pipeline(steps=[
+    ("preprocessor", preprocessor),
+    ("model", models[model_choice])
+])
+
+# Train model
+pipeline.fit(X_train, y_train)
+
+y_pred = pipeline.predict(X_test)
+y_proba = pipeline.predict_proba(X_test)[:, 1]
+
+# ---------------------- MODEL METRICS ----------------------
+st.subheader("📊 Model Performance")
+
+col1, col2, col3, col4 = st.columns(4)
+
+col1.metric("Accuracy", round(accuracy_score(y_test, y_pred), 3))
+col2.metric("Precision", round(precision_score(y_test, y_pred), 3))
+col3.metric("Recall", round(recall_score(y_test, y_pred), 3))
+col4.metric("F1-score", round(f1_score(y_test, y_pred), 3))
+
+# ---------------------- CONFUSION MATRIX ----------------------
+st.subheader("📌 Confusion Matrix")
+cm = confusion_matrix(y_test, y_pred)
+fig_cm, ax_cm = plt.subplots()
+sns.heatmap(cm, annot=True, cmap="Blues", fmt="d", ax=ax_cm)
+st.pyplot(fig_cm)
+
+# ---------------------- ROC CURVE ----------------------
+st.subheader("📈 ROC Curve")
+fpr, tpr, _ = roc_curve(y_test, y_proba)
+fig_roc, ax_roc = plt.subplots()
+ax_roc.plot(fpr, tpr)
+ax_roc.plot([0,1],[0,1],'--')
+ax_roc.set_xlabel("False Positive Rate")
+ax_roc.set_ylabel("True Positive Rate")
+st.pyplot(fig_roc)
+
+# =====================================================================
+# ===================== PREDICTION FORM ===============================
+# =====================================================================
+
+st.header("🧮 Predict Default for a New Customer")
+
+with st.form("prediction_form"):
+
+    colA, colB, colC = st.columns(3)
+
+    Age = colA.number_input("Age", 18, 100, 30)
+    Income = colA.number_input("Income", 0, 300000, 50000)
+    LoanAmount = colA.number_input("Loan Amount", 0, 500000, 15000)
+    CreditScore = colA.number_input("Credit Score", 300, 850, 650)
+    MonthsEmployed = colB.number_input("Months Employed", 0, 500, 24)
+    NumCreditLines = colB.number_input("Num Credit Lines", 0, 20, 3)
+    InterestRate = colB.number_input("Interest Rate (%)", 0.0, 50.0, 10.0)
+    LoanTerm = colB.number_input("Loan Term (months)", 1, 120, 36)
+    DTIRatio = colC.number_input("DTI Ratio", 0.0, 5.0, 0.25)
+
+    Education = colC.selectbox("Education", df["Education"].unique())
+    EmploymentType = colC.selectbox("Employment Type", df["EmploymentType"].unique())
+    MaritalStatus = colC.selectbox("Marital Status", df["MaritalStatus"].unique())
+    HasMortgage = colC.selectbox("Has Mortgage", df["HasMortgage"].unique())
+    HasDependents = colC.selectbox("Has Dependents", df["HasDependents"].unique())
+    LoanPurpose = st.selectbox("Loan Purpose", df["LoanPurpose"].unique())
+    HasCoSigner = st.selectbox("Has Co-signer", df["HasCoSigner"].unique())
+
+    submit = st.form_submit_button("Predict Default")
+
+if submit:
+    sample = pd.DataFrame([{
+        "Age": Age,
+        "Income": Income,
+        "LoanAmount": LoanAmount,
+        "CreditScore": CreditScore,
+        "MonthsEmployed": MonthsEmployed,
+        "NumCreditLines": NumCreditLines,
+        "InterestRate": InterestRate,
+        "LoanTerm": LoanTerm,
+        "DTIRatio": DTIRatio,
+        "Education": Education,
+        "EmploymentType": EmploymentType,
+        "MaritalStatus": MaritalStatus,
+        "HasMortgage": HasMortgage,
+        "HasDependents": HasDependents,
+        "LoanPurpose": LoanPurpose,
+        "HasCoSigner": HasCoSigner
+    }])
+
+    prediction = pipeline.predict(sample)[0]
+    probability = pipeline.predict_proba(sample)[0][1]
+
+    st.success(f"Predicted Default: **{prediction}** (1 = Default, 0 = No Default)")
+    st.info(f"Probability of Default: **{round(probability*100,2)}%**")
+
+
+
+# What “Predicted Default: 0” Means
+
+#Your output:
+
+#Predicted Default: 0 (1 = Default, 0 = No Default)
+#Probability of Default: 7.79%
+
+
+#This means:
+
+#🔹 Predicted Default = 0
+
+#✔ The model predicts the customer will NOT default on the loan.
+#❌ Not at risk.
+
+# What Probability of Default Means
+#🔹 Probability of Default = 7.79%
+
+#This means:
+
+#➡ Based on the customer's income, loan amount, employment, credit score, etc.,
+#➡ There is only a 7.79% chance they would default.
+
+#This is a very low risk level.
+
+#🔍 Interpretation in simple terms
+#Output	Meaning
+#0	Customer is predicted to be a safe borrower
+#1	Customer is predicted to default (high risk)
+#7.79%	Probability score → how strong the model believes the customer will default
+#🎯 Summary
+
+#✔ Model Prediction: Customer will repay the loan
+#✔ Confidence: Only 7.79% chance of default
+#✔ Risk Category: Low Risk (safe to approve) """
